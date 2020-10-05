@@ -1,0 +1,359 @@
+---
+title: "WGCNA Notebook week 0"
+output: html_notebook
+---
+
+
+## loading files and settings:
+```{R}
+.libPaths( c( "M:/Rstudio data file" , .libPaths() ) )
+library(xlsx)
+library(WGCNA)
+library(tidyverse)
+library(ggpubr)
+options(stringsAsFactors = FALSE)
+
+expression_data <- read.csv("expression_matrix.csv", header = FALSE)
+column_data <- read.csv("columns_metadata.csv")
+row_data <- read.csv("rows_metadata.csv")
+options(max.print=50)
+```
+
+
+First we assign the row names and delete column 1 which contains no expression data.
+After that the file is transposed and the clolumns are labeled S1 through S524.
+
+
+```{R}
+expression_data <- expression_data[-1];
+rownames(expression_data) <- row_data[,3]
+expression_data$entrez_id <- row_data[,5]
+expression_data <- expression_data[!is.na(expression_data$entrez_id), ]
+
+row_data <- row_data[!is.na(row_data$entrez_id), ]
+
+expression_data<- expression_data[ , -which(names(expression_data) %in% c("entrez_id"))]
+
+expression_data.t <- t(expression_data)
+expression_data.t <- as.data.frame(expression_data.t)
+
+rownames(expression_data.t) <- paste0("S", 1:nrow(expression_data.t))
+rownames(column_data) <- paste0("S", 1:nrow(column_data))
+```
+
+After this rows 334 through 524 are deleted to create various developmental datasets ranging from PCW 8 through 3 years of age.
+
+```{R}
+expression_data.t_total <- expression_data.t[-c(334:524), ]
+expression_data.t_26PCW <- expression_data.t[-c(220:524), ]
+expression_data.t_26PCW_3yrs <- expression_data.t[-c(1:220, 334:524), ]
+expression_data.t_1yrs <- expression_data.t[-c(297:524), ]
+expression_data.t_16PCW_19PCW <- expression_data.t[-c(1:119, 184:524), ]
+expression_data.t_21PCW_24PCW <- expression_data.t[-c(1:183, 216:524), ]
+expression_data.t_16PCW_24PCW <- expression_data.t[-c(1:119, 216:524), ]
+
+column_data_total <- column_data[-c(334:524), ]
+column_data_26PCW <- column_data[-c(220:524), ]
+column_data_26PCW_3yrs <- column_data[-c(1:220, 334:524), ]
+column_data_1yrs <- column_data[-c(297:524), ]
+column_data_16PCW_19PCW <- column_data[-c(1:119, 184:524), ]
+column_data_21PCW_24PCW <- column_data[-c(1:183, 216:524), ]
+column_data_16PCW_24PCW <- column_data[-c(1:119, 216:524), ]
+str(expression_data.t_26PCW_3yrs)
+```
+Next the tissues we are not interested in will be filtered out. To do this in a robust way we first isolate the tissue information from the column data and assign it to a new column in the expression data.
+
+
+```{R}
+
+expression_data.d_total <- expression_data.t_total[column_data_total$structure_acronym %in% c("DFC","VFC","MFC","OFC"),]
+
+
+expression_data.d_26PCW <- expression_data.t_26PCW[column_data_26PCW$structure_acronym %in% c("DFC","VFC","MFC","OFC"),]
+
+
+expression_data.d_26PCW_3yrs <- expression_data.t_26PCW_3yrs[column_data_26PCW_3yrs$structure_acronym %in% c("DFC","VFC","MFC","OFC"),]
+
+
+expression_data.d_1yrs <- expression_data.t_1yrs[column_data_1yrs$structure_acronym %in% c("DFC","VFC","MFC","OFC"),]
+
+
+expression_data.d_16PCW_24PCW <- expression_data.t_16PCW_24PCW[column_data_16PCW_24PCW$structure_acronym %in% c("DFC","VFC","MFC","OFC"),]
+
+expression_data.d_16PCW_19PCW <- expression_data.t_16PCW_19PCW[column_data_16PCW_19PCW$structure_acronym %in% c("DFC","VFC","MFC","OFC","S1C","M1C","M1C-S1C"),]
+
+str(expression_data.d_16PCW_19PCW)
+```
+
+
+```{R}
+#log transformation
+ggdensity(expression_data.d_total$ENSG00000000003)
+expression_data.d_total <- log(expression_data.d_total + 1)
+ggdensity(expression_data.d_total$ENSG00000000003)
+
+ggdensity(expression_data.d_26PCW_3yrs$ENSG00000000003)
+expression_data.d_26PCW_3yrs <- log(expression_data.d_26PCW_3yrs + 1)
+ggdensity(expression_data.d_26PCW_3yrs$ENSG00000000003)
+
+ggdensity(expression_data.d_26PCW$ENSG00000000003)
+expression_data.d_26PCW <- log(expression_data.d_26PCW + 1)
+ggdensity(expression_data.d_26PCW$ENSG00000000003)
+
+ggdensity(expression_data.d_1yrs$ENSG00000000003)
+expression_data.d_1yrs <- log(expression_data.d_1yrs + 1)
+ggdensity(expression_data.d_1yrs$ENSG00000000003)
+
+ggdensity(expression_data.d_16PCW_24PCW$ENSG00000000457)
+expression_data.d_16PCW_24PCW.l <- log(expression_data.d_16PCW_24PCW + 1)
+ggdensity(expression_data.d_16PCW_24PCW.l$ENSG00000000457)
+
+ggdensity(expression_data.d_16PCW_19PCW$ENSG00000000457)
+expression_data.d_16PCW_19PCW.l <- log2(expression_data.d_16PCW_19PCW + 1)
+ggdensity(expression_data.d_16PCW_19PCW.l$ENSG00000000457)
+
+#select dataset to use
+expression_data.d <- expression_data.d_16PCW_19PCW.l
+
+
+```
+
+```{R}
+# Keep only genes whose variance is non-zero and have at least 4 present entries 
+
+NumberMissingByGene =apply( is.na(data.frame(expression_data.d)),2, sum)
+
+summary(NumberMissingByGene) 
+variancedatExpr=as.vector(apply(as.matrix(expression_data.d),2,var, na.rm=T))
+no.presentdatExpr=as.vector(apply(!is.na(as.matrix(expression_data.d)),2, sum) ) 
+table(no.presentdatExpr) 
+
+KeepGenes= variancedatExpr>0 & no.presentdatExpr>=4
+
+
+table(KeepGenes)
+expression_data.d=expression_data.d[, KeepGenes]
+
+#does the same as:
+gsg = goodSamplesGenes(expression_data.d, verbose = 3);
+gsg$allOK
+
+if (!gsg$allOK) {
+  if (sum(!gsg$goodGenes)>0) printFlush(paste("Removing genes:", paste(names(expression_data.d)[!gsg$goodGenes], collapse = ", "))); if (sum(!gsg$goodSamples)>0) printFlush(paste("Removing samples:", paste(rownames(expression_data.d)[!gsg$goodSamples], collapse = ", ")));
+  expression_data.d = expression_data.d[gsg$goodSamples, gsg$goodGenes]
+}
+
+``` 
+
+```{R}
+
+sampleTree = hclust(dist(expression_data.d), method = "average")
+sizeGrWindow(12,9)
+par(cex = 0.6); par(mar = c(0,4,2,0))
+plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 2)
+```
+```{R}
+#Optional for cutting sample tree based on dataset
+sampleTree = hclust(dist(expression_data.d), method = "average")
+sizeGrWindow(12,9)
+par(cex = 0.6); par(mar = c(0,4,2,0))
+plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 2)
+abline(h = 85, col = "red"); # Determine cluster under the line
+clust = cutreeStatic(sampleTree, cutHeight = 85, minSize = 10)
+table(clust) # clust 1 contains the samples we want to keep. 
+keepSamples = (clust==1)
+expression_data.d = expression_data.d[keepSamples, ]
+nGenes = ncol(expression_data.d)
+nSamples = nrow(expression_data.d)
+
+```
+
+```{R}
+#filter arrays with too many missing values
+
+meanExpressionByArray=apply( expression_data.d,1,mean, na.rm=T)
+NumberMissingByArray=apply( is.na(data.frame(expression_data.d)),1, sum)
+
+NumberMissingByArray
+
+sizeGrWindow(9, 5)
+barplot(meanExpressionByArray,
+        xlab = "Sample", ylab = "Mean expression",
+        main ="Mean expression across samples",
+         cex.names = 0.7)
+
+#removal of faulty arrays (more than 5 missing entries). Find optimal cut off
+
+KeepArray= NumberMissingByArray<5
+table(KeepArray)
+
+
+
+
+
+```
+
+
+
+
+```{R}
+
+powers = c(c(1:10), seq(from = 5, to=20, by=1))
+sft = pickSoftThreshold(expression_data.d, powerVector = powers,blockSize = 20500, verbose = 5) 
+sizeGrWindow(9, 5); par(mfrow = c(1,2)); cex1 = 0.9
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2], xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n", main = paste("Scale independence")); text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2], labels=powers,cex=cex1,col="red")
+abline(h=0.80,col="red")
+plot(sft$fitIndices[,1], sft$fitIndices[,5], xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n", main = paste("Mean connectivity"))
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+abline(h=100,col="red")
+```
+
+```{R}
+
+net = blockwiseModules(expression_data.d, maxBlockSize = 30000, power = 14, TOMType = "unsigned", minModuleSize = 50, reassignThreshold = 0, mergeCutHeight = 0.2, numericLabels = TRUE, pamRespectsDendro = FALSE, saveTOMs = TRUE, saveTOMFileBase = "TOM16_19PCW_FC_MC_MM50_MCH0.2_P14_sample_removed", verbose = 3);
+
+table(net$colors);
+
+```
+
+```{R}
+#dissTOM = 1-TOMsimilarityFromExpr(expression_data.d, power = 14); following should work:
+TOM.mat = as.matrix(TOM)
+
+dissTOM = 1-TOM.mat
+dissTOM <- as.matrix(dissTOM)
+
+plotTOM = as.matrix(dissTOM^7)
+
+diag(plotTOM) = NA;
+
+moduleLabels = net$colors; 
+moduleColors = labels2colors(net$colors); 
+MEs = net$MEs; 
+geneTree = net$dendrograms[[1]];
+
+```
+
+```{R}
+sizeGrWindow(12, 9); mergedColors = labels2colors(net$colors); 
+plotDendroAndColors(net$dendrograms[[1]], mergedColors[net$blockGenes[[1]]], "Module colors", dendroLabels = FALSE, hang = 0.03, addGuide = TRUE, guideHang = 0.05);
+
+
+sizeGrWindow(9,9)
+TOMplot(plotTOM, geneTree, moduleColors, main = "Network heatmap plot, all genes")
+```
+
+```{R}
+nGenes = ncol(expression_data.d)
+nSamples = nrow(expression_data.d)
+
+nSelect = 500
+# For reproducibility, we set the random seed
+set.seed(20);
+select = sample(nGenes, size = nSelect);
+selectTOM = dissTOM[select, select];
+# There’s no simple way of restricting a clustering tree to a subset of genes, so we must re-cluster.
+selectTree = hclust(as.dist(selectTOM), method = "average")
+selectColors = moduleColors[select];
+# Open a graphical window
+sizeGrWindow(9,9)
+# Taking the dissimilarity to a power, say 10, makes the plot more informative by effectively changing
+# the color palette; setting the diagonal to NA also improves the clarity of the plot
+plotDiss = selectTOM^7;
+diag(plotDiss) = NA;
+TOMplot(plotDiss, selectTree, selectColors, main = "Network heatmap plot, selected genes")
+
+```
+
+```{R}
+# Read in the probe annotation
+annot = read.csv(file = "rows_metadata.csv");
+# Match probes in the data set to the probe IDs in the annotation file
+probes = names(expression_data.d)
+probes2annot = match(probes, annot$ensembl_gene_id)
+# Get the corresponding Locuis Link IDs
+allLLIDs = annot$ensembl_gene_id[probes2annot];
+# $ Choose interesting modules
+intModules = c("grey","turquoise","blue","brown","yellow","green","red","black","pink","magenta","purple","greenyellow","tan","salmon","cyan","midnightblue","lightcyan","grey60","lightgreen","lightyellow","royalblue","darkred","darkgreen","darkturquoise","darkgrey","orange","darkorange","white","skyblue","saddlebrown","steelblue","paleturquoise","violet","darkolivegreen","darkmagenta","sienna3","yellowgreen","skyblue3")
+for (module in intModules)
+{
+# Select module probes
+modGenes = (moduleColors==module)
+# Get their entrez ID codes
+modLLIDs = allLLIDs[modGenes];
+# Write them into a file
+fileName = paste("LocusLinkIDs16_19_sample_removed-", module, ".txt", sep="");
+write.table(as.data.frame(modLLIDs), file = fileName,
+row.names = FALSE, col.names = FALSE)
+}
+# As background in the enrichment analysis, we will use all probes in the analysis.
+fileName = paste("LocusLinkIDs-all16_19_sample_removed.txt", sep="");
+write.table(as.data.frame(allLLIDs), file = fileName,
+row.names = FALSE, col.names = FALSE)
+
+#networkConcepts(expression_data.d, power = 22, trait = NULL, networkType = "unsigned")
+```
+
+```{R}
+module_table <- as.data.frame(net$colors)
+module_table <- rownames_to_column(module_table)
+module_table_seed <- as.data.frame(module_table[module_table$rowname %in% c("ENSG00000174938","ENSG00000072864","ENSG00000091262","ENSG00000149932","ENSG00000090238","ENSG00000166780","ENSG00000254852","ENSG00000167371","ENSG00000013364","ENSG00000149930","ENSG00000197471","ENSG00000183336","ENSG00000185164","ENSG00000103222","ENSG00000149925","ENSG00000156968","ENSG00000174939","ENSG00000174943","ENSG00000133393","ENSG00000157045","ENSG00000149926","ENSG00000102886","ENSG00000103489","ENSG00000085721","ENSG00000103485","ENSG00000103512","ENSG00000157212","ENSG00000102879","ENSG00000103502","ENSG00000166783","ENSG00000149929","ENSG00000149922","ENSG00000102882","ENSG00000149923","ENSG00000133392","ENSG00000103495","ENSG00000079616"),])
+rownames(module_table_seed) <- c()
+module_table_seed <- column_to_rownames(module_table_seed, "rowname")
+
+
+module_table_seed <- module_table_seed[order(-module_table_seed$`net$colors`), , drop = FALSE]
+
+write.xlsx(module_table_seed, file = "Seedgene_per_module16_19PCW_FC_MC_MM50_MCH0.2_P14_sample_removed.xlsx",
+      sheetName = "Seedgene-per-module", append = FALSE)
+
+```
+
+
+```{R}
+
+annot = read.csv(file = "rows_metadata.csv");
+modules = c("blue");
+probes = names(expression_data.d);
+inModule = is.finite(match(moduleColors, modules));
+modProbes = probes[inModule];
+modGenes = annot$gene_symbol[match(modProbes, annot$ensembl_gene_id)];
+
+modTOM = TOM.mat[inModule, inModule];
+dimnames(modTOM) = list(modProbes, modProbes);
+
+
+cyt = exportNetworkToCytoscape(modTOM,
+edgeFile = paste("CytoscapeInput-edges16_19PCW_FC_MC_MM50_MCH0.2_P14_sample_removed", paste(modules, collapse="-"), ".txt", sep=""),
+nodeFile = paste("CytoscapeInput-nodes16_19PCW_FC_MC_MM50_MCH0.2_P14_sample_removed", paste(modules, collapse="-"), ".txt", sep=""),
+weighted = TRUE,
+threshold = 0.05,
+nodeNames = modProbes,
+altNodeNames = modGenes,
+nodeAttr = moduleColors[inModule]);
+```
+
+
+```{R}
+edge_file_blue <- read.table(file = "clipboard", 
+                      sep = "\t", header=TRUE)
+
+node_file_blue <- read.table(file = "clipboard", 
+                      sep = "\t", header=TRUE)
+
+edge_200 <- edge_file_blue[order(edge_file_blue$weight),]
+edge_200$number=row.names(edge_200)
+rownames(edge_200) <- paste0( 1:nrow(edge_200))
+
+edge_200 <- edge_200[edge_200$weight >= 0.150,]
+delete <- as.numeric(edge_200$number)
+node_200 <- node_file_blue[-c(as.numeric(delete)),]
+
+rownames(edge_200) <- c()
+edge_200 <- edge_200[,1:6]
+
+write.csv(edge_200, file = "edge_file_filtered_MTurq_0,15.csv")
+write.csv(node_file_blue, file = "node_file_Mturq.csv")
+
+
+```
