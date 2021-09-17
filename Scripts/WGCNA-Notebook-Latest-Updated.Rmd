@@ -1,0 +1,384 @@
+---
+title: "WGCNA-notebook-Latest-updated"
+output: html_notebook
+---
+
+
+
+```{r}
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+library(GO.db)
+library(xlsx)
+library(WGCNA)
+library(tidyverse)
+library(ggpubr)
+library(gdata)
+library(dplyr)
+library(writexl)
+options(stringsAsFactors = FALSE)
+
+expression_data <- read.csv("expression_matrix.csv", header = FALSE)
+column_data <- read.csv("columns_metadata.csv")
+row_data <- read.csv("rows_metadata.csv")
+```
+
+```{R}
+expression_data <- expression_data[-1];
+rownames(expression_data) <- row_data[,1]
+expression_data$entrez_id <- row_data[,5]
+expression_data <- expression_data[!is.na(expression_data$entrez_id), ]
+
+row_data <- row_data[!is.na(row_data$entrez_id), ]
+
+expression_data<- expression_data[ , -which(names(expression_data) %in% c("entrez_id"))]
+
+expression_data.t <- t(expression_data)
+expression_data.t <- as.data.frame(expression_data.t)
+
+rownames(expression_data.t) <- paste0("S", 1:nrow(expression_data.t))
+rownames(column_data) <- paste0("S", 1:nrow(column_data))
+```
+
+```{r}
+expression_data.t_16PCW_24PCW <- expression_data.t[-c(1:119, 216:524), ]
+
+column_data_16PCW_24PCW <- column_data[-c(1:119, 216:524), ]
+
+expression_data_16PCW_24PCW <- expression_data.t_16PCW_24PCW[column_data_16PCW_24PCW$structure_acronym %in% c("DFC","VFC","MFC","OFC","S1C","M1C","M1C-S1C"),]
+
+column_data_16PCW_24PCW <- column_data_16PCW_24PCW[column_data_16PCW_24PCW$structure_acronym %in% c("DFC","VFC","MFC","OFC","S1C","M1C","M1C-S1C"),]
+
+expression_data_16PCW_24PCW.l <- log2(expression_data_16PCW_24PCW + 1)
+
+expression_data.d <- expression_data_16PCW_24PCW.l
+
+#  expression_data.t_16PCW_24PCW <- expression_data.t[-c(1:119, 216:524), ]
+#  expression_data.t_16PCW_19PCW <- expression_data.t[-c(1:119, 184:524), ]
+#  expression_data.t_12PCW_19PCW <- expression_data.t[-c(1:30, 184:524), ]
+#
+```
+
+```{r}
+gsg = goodSamplesGenes(expression_data.d, verbose = 3);
+gsg$allOK
+
+if (!gsg$allOK)
+{
+# Optionally, print the gene and sample names that were removed:
+if (sum(!gsg$goodGenes)>0)
+printFlush(paste("Removing genes:", paste(names(expression_data.d)[!gsg$goodGenes], collapse = ", ")));
+if (sum(!gsg$goodSamples)>0)
+printFlush(paste("Removing samples:", paste(rownames(expression_data.d)[!gsg$goodSamples], collapse = ", ")));
+# Remove the offending genes and samples from the data:
+expression_data.d = expression_data.d[gsg$goodSamples, gsg$goodGenes]
+}
+```
+
+```{r}
+sampleTree = hclust(dist(expression_data.d), method = "average");
+# Plot the sample tree: Open a graphic output window of size 12 by 9 inches
+# The user should change the dimensions if the window is too large or too small.
+sizeGrWindow(12,9)
+#pdf(file = "Plots/sampleClustering.pdf", width = 12, height = 9);
+par(cex = 0.6);
+par(mar = c(0,4,2,0))
+plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="", cex.lab = 1.5,
+cex.axis = 1.5, cex.main = 2)
+
+# Plot a line to show the cut
+abline(h = 88, col = "red");
+# Determine cluster under the line
+clust = cutreeStatic(sampleTree, cutHeight = 88, minSize = 10)
+table(clust)
+# clust 1 contains the samples we want to keep.
+keepSamples = (clust==1)
+expression_data.d = expression_data.d[keepSamples, ]
+column_data_16PCW_24PCW = column_data_16PCW_24PCW[keepSamples, ]
+
+#keep(expression_data.d, column_data_16PCW_24PCW, row_data, sure = TRUE)
+```
+
+```{r}
+powers = c(c(1:10), seq(from = 10, to=30, by=2))
+# Call the network topology analysis function
+sft = pickSoftThreshold(expression_data.d, powerVector = powers, verbose = 5, networkType = "signed")
+# Plot the results:
+sizeGrWindow(9, 5)
+par(mfrow = c(1,2));
+cex1 = 0.9;
+# Scale-free topology fit index as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+main = paste("Scale independence"));
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+labels=powers,cex=cex1,col="red");
+# this line corresponds to using an R^2 cut-off of h
+abline(h=0.90,col="red")
+# Mean connectivity as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], sft$fitIndices[,5],
+xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+main = paste("Mean connectivity"))
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+```
+```{r}
+softPower = 28;
+adjacency = adjacency(expression_data.d, power = softPower, type = "signed");
+
+```
+
+```{r}
+# Turn adjacency into topological overlap
+gc()
+TOM = TOMsimilarity(adjacency, TOMType = "signed");
+dissTOM = 1-TOM
+#keep(dissTOM, row_data, column_data_16PCW_24PCW, expression_data.d, sure = TRUE)
+#save(TOM, file = " TOM_signed_Power28.RData")
+```
+
+```{r}
+# Call the hierarchical clustering function
+geneTree = hclust(as.dist(dissTOM), method = "average");
+# Plot the resulting clustering tree (dendrogram)
+sizeGrWindow(12,9)
+plot(geneTree, xlab="", sub="", main = "Gene clustering on TOM-based dissimilarity",
+labels = FALSE, hang = 0.04);
+```
+
+```{r}
+# We like large modules, so we set the minimum module size relatively high:
+minModuleSize = 30;
+# Module identification using dynamic tree cut:
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM,
+deepSplit = 2, pamRespectsDendro = FALSE,
+minClusterSize = minModuleSize);
+table(dynamicMods)
+```
+
+```{r}
+# Convert numeric lables into colors
+dynamicColors = labels2colors(dynamicMods)
+table(dynamicColors)
+# Plot the dendrogram and colors underneath
+sizeGrWindow(8,6)
+plotDendroAndColors(geneTree, dynamicColors, "Dynamic Tree Cut",
+dendroLabels = FALSE, hang = 0.03,
+addGuide = TRUE, guideHang = 0.05,
+main = "Gene dendrogram and module colors")
+```
+
+```{r}
+# Calculate eigengenes
+MEList = moduleEigengenes(expression_data.d, colors = dynamicColors)
+MEs = MEList$eigengenes
+# Calculate dissimilarity of module eigengenes
+MEDiss = 1-cor(MEs);
+#fix(MEList)
+# Cluster module eigengenes
+METree = hclust(as.dist(MEDiss), method = "average");
+# Plot the result
+sizeGrWindow(7, 6)
+plot(METree, main = "Clustering of module eigengenes",
+xlab = "", sub = "")
+
+MEDissThres = 0.2
+# Plot the cut line into the dendrogram
+abline(h=MEDissThres, col = "red")
+# Call an automatic merging function
+merge = mergeCloseModules(expression_data.d, dynamicColors, cutHeight = MEDissThres, verbose = 3)
+# The merged module colors
+mergedColors = merge$colors;
+# Eigengenes of the new merged modules:
+mergedMEs = merge$newMEs;
+
+```
+
+
+```{r}
+sizeGrWindow(12, 9)
+#pdf(file = "Plots/geneDendro-3.pdf", wi = 9, he = 6)
+plotDendroAndColors(geneTree, cbind(dynamicColors, mergedColors),
+c("Dynamic Tree Cut", "Merged dynamic"),
+dendroLabels = FALSE, hang = 0.03,
+addGuide = TRUE, guideHang = 0.05)
+#dev.off()
+
+```
+
+```{r}
+# Rename to moduleColors
+moduleColors = mergedColors
+# Construct numerical labels corresponding to the colors
+colorOrder = c("grey", standardColors(50));
+moduleLabels = match(moduleColors, colorOrder)-1;
+MEs = mergedMEs;
+# Save module colors and labels for use in subsequent parts
+#save(MEs, moduleLabels, moduleColors, geneTree, file = "FemaleLiver-02-networkConstruction-stepByStep.RData")
+```
+
+```{r}
+# Read in the probe annotation
+annot = read.csv(file = "rows_metadata.csv")
+load("C:/Users/Wietse/Desktop/Stage/Current work file/gene_to_CNV.RData")
+# Match probes in the data set to the probe IDs in the annotation file
+probes = names(expression_data.d)
+probes2annot = match(probes, annot$row_num)
+# Get the corresponding Locuis Link IDs
+allLLIDs = annot$ensembl_gene_id[probes2annot];
+allgeneSymbols = annot$gene_symbol[probes2annot];
+
+#Create overview of genes and module membership
+moduleOverview = rbind(allLLIDs, moduleColors, allgeneSymbols)
+moduleOverview = as.data.frame(moduleOverview)
+moduleOverview = t(moduleOverview)
+moduleOverview = as.data.frame(moduleOverview)
+
+moduleOverviewCNV <- filter(moduleOverview, grepl('ENSG00000174938|ENSG00000072864|ENSG00000091262|ENSG00000149932|ENSG00000090238|ENSG00000166780|ENSG00000254852|ENSG00000167371|ENSG00000013364|ENSG00000149930|ENSG00000197471|ENSG00000183336|ENSG00000185164|ENSG00000103222|ENSG00000149925|ENSG00000156968|ENSG00000174939|ENSG00000174943|ENSG00000133393|ENSG00000157045|ENSG00000149926|ENSG00000102886|ENSG00000103489|ENSG00000085721|ENSG00000103485|ENSG00000103512|ENSG00000157212|ENSG00000102879|ENSG00000103502|ENSG00000166783|ENSG00000149929|ENSG00000149922|ENSG00000102882|ENSG00000149923|ENSG00000133392|ENSG00000103495|ENSG00000079616', allLLIDs))
+
+names(genePerCNV) = c("allgeneSymbols","CNV")
+moduleOverviewCNV = merge(moduleOverviewCNV, genePerCNV, by.x="allgeneSymbols")
+
+moduleOverviewCNV = moduleOverviewCNV[order(moduleOverviewCNV$moduleColors),]
+
+save(moduleOverviewCNV, file = "ModuleOverviewCNV_Signed28_MMS30_DS2_MCH0.15.RData")
+write_xlsx(moduleOverviewCNV, "C:\\Users\\Wietse\\Desktop\\Stage\\Current work file\\Module assignment different conditions\\ModuleOverviewCNV_Signed28_MMS30_DS2_MCH0.15.xlsx")
+```
+
+```{r}
+#Enrichment analysis
+annot = read.csv(file = "rows_metadata.csv")
+probes = names(expression_data.d)
+probes2annot = match(probes, annot$row_num)
+allLLIDs = annot$entrez_id[probes2annot];
+
+GOenr = GOenrichmentAnalysis(moduleColors, allLLIDs, organism = "human", nBestP = 10);
+
+tab = GOenr$bestPTerms[[4]]$enrichment
+
+keepCols = c(1, 2, 5, 6, 7, 12, 13);
+screenTab = tab[, keepCols];
+# Round the numeric columns to 2 decimal places:
+numCols = c(3, 4);
+screenTab[, numCols] = signif(apply(screenTab[, numCols], 2, as.numeric), 2)
+# Truncate the the term name to at most 40 characters
+screenTab[, 7] = substring(screenTab[, 7], 1, 40)
+# Shorten the column names:
+colnames(screenTab) = c("module", "size", "p-val", "Bonf", "nInTerm", "ont", "term name");
+rownames(screenTab) = NULL;
+# Set the width of R's output. The reader should play with this number to obtain satisfactory output.
+options(width=95)
+# Finally, display the enrichment table:
+screenTab
+```
+
+```{r}
+#Risk gene checker
+risk_gene_list <- read.csv("C:/Users/Wietse/Desktop/Stage/Current work file/SFARI-Gene_genes_01-13-2021release_05-10-2021export.csv")
+
+moduleOverview = rbind(allLLIDs, moduleColors, allgeneSymbols)
+moduleOverview = as.data.frame(moduleOverview)
+moduleOverview = t(moduleOverview)
+moduleOverview = as.data.frame(moduleOverview)
+
+module_list <- split(moduleOverview, f = moduleOverview$moduleColors) 
+module_list <- map(module_list, ~.$allLLIDs) 
+
+risk_probes <-  risk_gene_list$ensembl.id
+probes2annot = match(risk_probes, annot$ensembl_gene_id)
+risk_gene_list$entrez <- annot$entrez_id[probes2annot];
+
+ASD_risk_percent <- c()
+
+for(i in 1:length(module_list)){
+percent  <- (length(intersect(module_list[[i]], risk_gene_list$entrez))/length(module_list[[i]]))*100
+ ASD_risk_percent <- append(ASD_risk_percent, as.numeric(percent[1])) ; 
+  
+}
+
+ASD_risk_percent <- as.data.frame(t(rbind(ASD_risk_percent, names(module_list))))
+ASD_risk_percent[,1] <- as.numeric(ASD_risk_percent[,1])
+
+
+probes_modules <- moduleOverviewCNV$moduleColors
+probes2ASD_risk = match(probes_modules, ASD_risk_percent$V2)
+moduleOverviewCNV$ASD_percent <- ASD_risk_percent$ASD_risk_percent[probes2ASD_risk];
+
+ggdensity(ASD_risk_percent[,1])
+
+boxplot(ASD_risk_percent[,1])
+
+abline(h = 4.029, col = "red")
+
+abline(h = 9.6692112, col = "blue")
+
+abline(h = 3.022975, col = "green")
+```
+
+
+
+
+```{r}
+intModules = c("brown", "red", "salmon")
+for (module in intModules)
+{
+# Select module probes
+modGenes = (moduleColors==module)
+# Get their entrez ID codes
+modLLIDs = allLLIDs[modGenes];
+# Write them into a file
+fileName = paste("LocusLinkIDs16_24_outliers_removed_signed-", module, ".txt", sep="");
+write.table(as.data.frame(modLLIDs), file = fileName,
+row.names = FALSE, col.names = FALSE)
+}
+# As background in the enrichment analysis, we will use all probes in the analysis.
+fileName = paste("LocusLinkIDs-all16_19_sample_removed.txt", sep="");
+write.table(as.data.frame(allLLIDs), file = fileName,
+row.names = FALSE, col.names = FALSE)
+```
+
+
+```{r}
+# $ Choose interesting modules
+intModules = c("brown", "red", "salmon")
+for (module in intModules)
+{
+# Select module probes
+modGenes = (moduleColors==module)
+# Get their entrez ID codes
+modLLIDs = allLLIDs[modGenes];
+# Write them into a file
+fileName = paste("LocusLinkIDs16_24_outliers_removed_signed-", module, ".txt", sep="");
+write.table(as.data.frame(modLLIDs), file = fileName,
+row.names = FALSE, col.names = FALSE)
+}
+# A
+```
+
+
+```{r}
+
+# Read in the annotation file
+annot = read.csv(file = "rows_metadata.csv")
+# Select modules
+modules = c("brown", "red")
+# Select module probes
+probes = names(expression_data.d)
+inModule = is.finite(match(moduleColors, modules))
+modProbes = probes[inModule]
+modGenes = annot$gene_symbol[match(modProbes, annot$substanceBXH)]
+# Select the corresponding Topological Overlap
+modTOM = TOM[inModule, inModule]
+
+dimnames(modTOM) = list(modProbes, modProbes)
+# Export the network into edge and node list files Cytoscape can read
+cyt = exportNetworkToCytoscape(modTOM,
+edgeFile = paste("CytoscapeInput-edges-", paste(modules, collapse="-"), ".txt", sep=""),
+nodeFile = paste("CytoscapeInput-nodes-", paste(modules, collapse="-"), ".txt", sep=""),
+weighted = TRUE,
+threshold = 0.02,
+nodeNames = modProbes,
+altNodeNames = modGenes,
+nodeAttr = moduleColors[inModule])
+
+```
+
